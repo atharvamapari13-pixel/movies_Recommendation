@@ -1,11 +1,15 @@
+import os
 import requests
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # =============================
 # CONFIG
 # =============================
-API_BASE = "https://movie-rec-466x.onrender.com" or "http://127.0.0.1:8000"
-TMDB_IMG = "https://image.tmdb.org/t/p/w500"
+API_BASE = os.getenv("API_BASE", "http://127.0.0.1:8000")
+TMDB_IMG = os.getenv("TMDB_IMG", "https://image.tmdb.org/t/p/w500")
 
 st.set_page_config(page_title="Movie Recommender", page_icon="🎬", layout="wide")
 
@@ -94,13 +98,25 @@ def poster_grid(cards, cols=6, key_prefix="grid"):
             poster = m.get("poster_url")
 
             with colset[c]:
-                if poster:
-                    st.image(poster, use_column_width=True)
-                else:
-                    st.write("🖼️ No poster")
+                img_tag = ""
+                if poster and str(poster).startswith("http"):
+                    img_tag = f'<img src="{poster}" alt="{title}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;border-radius:12px;" onerror="this.style.display=\'none\';" />'
+
+                st.markdown(
+                    f"""
+                    <div style="position:relative;width:100%;height:250px;border-radius:12px;overflow:hidden;background:linear-gradient(135deg,#1f2937,#0f172a);display:flex;flex-direction:column;justify-content:center;align-items:center;border:1px solid rgba(255,255,255,0.08);margin-bottom:8px;">
+                        <div style="padding:12px;text-align:center;z-index:0;">
+                            <div style="font-size:2.2rem;margin-bottom:6px;">🎬</div>
+                            <div style="font-size:0.85rem;font-weight:600;color:#f1f5f9;line-height:1.2;">{title}</div>
+                        </div>
+                        {img_tag}
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
                 if st.button("Open", key=f"{key_prefix}_{r}_{c}_{idx}_{tmdb_id}"):
-                    if tmdb_id:
+                    if tmdb_id is not None:
                         goto_details(tmdb_id)
 
                 st.markdown(
@@ -112,14 +128,16 @@ def to_cards_from_tfidf_items(tfidf_items):
     cards = []
     for x in tfidf_items or []:
         tmdb = x.get("tmdb") or {}
-        if tmdb.get("tmdb_id"):
-            cards.append(
-                {
-                    "tmdb_id": tmdb["tmdb_id"],
-                    "title": tmdb.get("title") or x.get("title") or "Untitled",
-                    "poster_url": tmdb.get("poster_url"),
-                }
-            )
+        tmdb_id = tmdb.get("tmdb_id") if tmdb.get("tmdb_id") is not None else x.get("tmdb_id")
+        title = tmdb.get("title") or x.get("title") or "Untitled"
+        poster_url = tmdb.get("poster_url")
+        cards.append(
+            {
+                "tmdb_id": tmdb_id,
+                "title": title,
+                "poster_url": poster_url,
+            }
+        )
     return cards
 
 
@@ -144,14 +162,25 @@ def parse_tmdb_search_to_cards(data, keyword: str, limit: int = 24):
         for m in raw:
             title = (m.get("title") or "").strip()
             tmdb_id = m.get("id")
-            poster_path = m.get("poster_path")
-            if not title or not tmdb_id:
+            poster_path = m.get("poster_path") or m.get("poster_url")
+            if not title or tmdb_id is None:
                 continue
+            
+            poster_url = None
+            if poster_path:
+                p_str = str(poster_path).strip()
+                if p_str.startswith("http"):
+                    poster_url = p_str
+                else:
+                    if not p_str.startswith("/"):
+                        p_str = "/" + p_str
+                    poster_url = f"{TMDB_IMG}{p_str}"
+
             raw_items.append(
                 {
                     "tmdb_id": int(tmdb_id),
                     "title": title,
-                    "poster_url": f"{TMDB_IMG}{poster_path}" if poster_path else None,
+                    "poster_url": poster_url,
                     "release_date": m.get("release_date", ""),
                 }
             )
@@ -160,11 +189,10 @@ def parse_tmdb_search_to_cards(data, keyword: str, limit: int = 24):
     elif isinstance(data, list):
         raw_items = []
         for m in data:
-            # might be {tmdb_id,title,poster_url}
-            tmdb_id = m.get("tmdb_id") or m.get("id")
+            tmdb_id = m.get("tmdb_id") if m.get("tmdb_id") is not None else m.get("id")
             title = (m.get("title") or "").strip()
             poster_url = m.get("poster_url")
-            if not title or not tmdb_id:
+            if not title or tmdb_id is None:
                 continue
             raw_items.append(
                 {
@@ -283,7 +311,7 @@ if st.session_state.view == "home":
 # ==========================================================
 elif st.session_state.view == "details":
     tmdb_id = st.session_state.selected_tmdb_id
-    if not tmdb_id:
+    if tmdb_id is None:
         st.warning("No movie selected.")
         if st.button("← Back to Home"):
             goto_home()
@@ -308,10 +336,24 @@ elif st.session_state.view == "details":
 
     with left:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        if data.get("poster_url"):
-            st.image(data["poster_url"], use_column_width=True)
-        else:
-            st.write("🖼️ No poster")
+        poster_url = data.get("poster_url")
+        movie_title = data.get("title", "")
+        img_tag = ""
+        if poster_url and str(poster_url).startswith("http"):
+            img_tag = f'<img src="{poster_url}" alt="{movie_title}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;border-radius:12px;" onerror="this.style.display=\'none\';" />'
+
+        st.markdown(
+            f"""
+            <div style="position:relative;width:100%;min-height:360px;border-radius:12px;overflow:hidden;background:linear-gradient(135deg,#1f2937,#0f172a);display:flex;flex-direction:column;justify-content:center;align-items:center;border:1px solid rgba(255,255,255,0.08);margin-bottom:8px;">
+                <div style="padding:20px;text-align:center;z-index:0;">
+                    <div style="font-size:3.5rem;margin-bottom:8px;">🎬</div>
+                    <div style="font-size:1.1rem;font-weight:700;color:#f1f5f9;line-height:1.3;">{movie_title}</div>
+                </div>
+                {img_tag}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
     with right:
@@ -330,9 +372,17 @@ elif st.session_state.view == "details":
         st.write(data.get("overview") or "No overview available.")
         st.markdown("</div>", unsafe_allow_html=True)
 
-    if data.get("backdrop_url"):
+    if data.get("backdrop_url") and str(data.get("backdrop_url")).startswith("http"):
+        b_url = data.get("backdrop_url")
         st.markdown("#### Backdrop")
-        st.image(data["backdrop_url"], use_column_width=True)
+        st.markdown(
+            f"""
+            <div style="width:100%;border-radius:12px;overflow:hidden;margin-bottom:16px;">
+                <img src="{b_url}" alt="Backdrop" style="width:100%;height:auto;max-height:400px;object-fit:cover;border-radius:12px;" onerror="this.parentElement.style.display='none';" />
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
     st.divider()
     st.markdown("### ✅ Recommendations")
